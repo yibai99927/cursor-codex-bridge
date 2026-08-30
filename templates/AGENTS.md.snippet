@@ -1,0 +1,1 @@
+编码实现、修 bug、写测试时：你只做规划和验收，用 cursor-worker MCP 把执行交给 Cursor CLI。独立任务并行多次 spawn_cursor（各带 task_name）；同一会话多轮用 followup_cursor。详见 skill cursor-worker。

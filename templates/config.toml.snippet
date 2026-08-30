@@ -1,0 +1,17 @@
+# 追加到 ~/.codex/config.toml（不要覆盖整个文件）。
+# 把下面三处改成你的机器路径：
+#   1) node 绝对路径（which node）
+#   2) 本仓库里 server.mjs 的绝对路径
+#   3) CURSOR_WORKER_ROOTS：允许 Cursor 改文件的根目录，冒号分隔
+
+[mcp_servers.cursor_worker]
+command = "/opt/homebrew/bin/node"
+args = ["/ABS/PATH/TO/cursor-codex-bridge/server.mjs"]
+startup_timeout_sec = 20
+tool_timeout_sec = 90
+enabled = true
+
+[mcp_servers.cursor_worker.env]
+AGENT_BIN = "/ABS/PATH/TO/home/.local/bin/agent"
+CURSOR_WORKER_HOME = "/ABS/PATH/TO/home/.codex/cursor-worker"
+CURSOR_WORKER_ROOTS = "/ABS/PATH/TO/your/dev:/ABS/PATH/TO/your/Documents"
