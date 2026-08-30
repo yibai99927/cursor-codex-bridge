@@ -1,0 +1,10 @@
+{
+  "name": "cursor-codex-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Codex MCP: Cursor CLI as an async worker for long and multi-turn coding tasks",
+  "bin": {
+    "cursor-codex-bridge": "./server.mjs"
+  }
+}
