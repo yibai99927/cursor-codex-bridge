@@ -166,6 +166,17 @@ function fail(message) {
   };
 }
 
+let launchChain = Promise.resolve();
+
+function enqueueLaunch(fn) {
+  const run = launchChain.then(fn, fn);
+  launchChain = run.then(
+    () => {},
+    () => {}
+  );
+  return run;
+}
+
 function startJob(runId) {
   const child = spawn(process.execPath, [join(BRIDGE_DIR, "run-job.mjs"), runId], {
     detached: true,
@@ -304,15 +315,17 @@ async function dispatch(name, args) {
     }
     case "spawn_cursor":
       return ok(
-        launchRun({
-          prompt: args.prompt,
-          workspace: args.workspace,
-          model: args.model,
-          sandbox: args.sandbox,
-          approve_mcps: args.approve_mcps,
-          taskName: args.task_name,
-          mode: args.mode,
-        })
+        await enqueueLaunch(() =>
+          launchRun({
+            prompt: args.prompt,
+            workspace: args.workspace,
+            model: args.model,
+            sandbox: args.sandbox,
+            approve_mcps: args.approve_mcps,
+            taskName: args.task_name,
+            mode: args.mode,
+          })
+        )
       );
     case "followup_cursor": {
       if (!args.run_id && !args.session_id) {
@@ -331,14 +344,16 @@ async function dispatch(name, args) {
       }
       if (!sessionId) throw new Error("没有可用的 session_id");
       return ok(
-        launchRun({
-          prompt: args.prompt,
-          workspace,
-          model: args.model,
-          sessionId,
-          taskName,
-          mode,
-        })
+        await enqueueLaunch(() =>
+          launchRun({
+            prompt: args.prompt,
+            workspace,
+            model: args.model,
+            sessionId,
+            taskName,
+            mode,
+          })
+        )
       );
     }
     case "get_cursor_status":
