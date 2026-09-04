@@ -1,0 +1,7 @@
+# cursor-codex-bridge
+
+Agent instructions: read AGENTS.md in this repository and follow it.
+
+Human docs: README.md
+
+Repo: https://github.com/yibai99927/cursor-codex-bridge

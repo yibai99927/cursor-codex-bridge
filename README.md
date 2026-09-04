@@ -1,5 +1,7 @@
 # cursor-codex-bridge
 
+**Agent：克隆或 `git pull` 后只读根目录 `AGENTS.md`，按其中步骤安装和使用。** 人类读本文。`llms.txt` 只指向 `AGENTS.md`。
+
 让 **Codex 当指挥官**（拆任务、规划、验收），**Cursor CLI 当工人**（改代码）。
 
 本仓库是一个本地 MCP 服务器：Codex 调用带 schema 的工具，服务器在后台拉起 `agent -p`。任务可以很长，也可以同一会话多轮续跑；互不依赖的模块可以同时派出多个独立 Cursor 子 agent。
@@ -7,6 +9,8 @@
 已在本机验证：10 个模块并行实现 + 每路 `followup` 续跑，10 个 `session_id` 互不相同，对话暗号全部对上。macOS / Linux / **原生 Windows** 用同一套代码；Windows 必须用分号白名单和 `cursor-agent.exe`，见下方「原生 Windows」。
 
 ## 给 AI 的摘要（先读这里）
+
+安装与逐步操作以根目录 **`AGENTS.md` 为准**（拉取仓库后从那一份执行）。下面是装好之后的指挥官约定。
 
 你是指挥官，不是工人。
 
@@ -180,6 +184,8 @@ node scripts/fanout10.mjs     # 10 模块并行 + 续跑（耗时约数分钟）
 ## 仓库里有什么
 
 ```
+AGENTS.md                  给 agent 的安装+使用说明书（拉取后先读这个）
+llms.txt                   指向 AGENTS.md
 server.mjs                 MCP（stdio JSON-RPC，零依赖）
 run-job.mjs                后台拉起 agent
 lib.mjs                    路径校验、事件摘要、run 状态
