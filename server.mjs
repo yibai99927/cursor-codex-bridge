@@ -10,8 +10,10 @@ import {
   assertWorkspace,
   createCursorChat,
   ensureDir,
+  execAgent,
   homeDir,
   isPidAlive,
+  killPid,
   listRunIds,
   newId,
   publicRun,
@@ -182,6 +184,7 @@ function startJob(runId) {
     detached: true,
     stdio: "ignore",
     env: process.env,
+    windowsHide: true,
   });
   child.unref();
   return child.pid;
@@ -279,13 +282,7 @@ function cancelRun(runId) {
     return publicRun(meta);
   }
   for (const pid of [meta.pid, meta.job_pid]) {
-    if (isPidAlive(pid)) {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        // ignore
-      }
-    }
+    if (isPidAlive(pid)) killPid(pid);
   }
   meta.status = "cancelled";
   meta.ended_at = new Date().toISOString();
@@ -298,18 +295,16 @@ async function dispatch(name, args) {
     case "cursor_bridge_health": {
       let status = "";
       try {
-        const { execFileSync } = await import("node:child_process");
-        status = execFileSync(agentBin(), ["status"], {
-          encoding: "utf8",
-          timeout: 20_000,
-        }).trim();
+        status = execAgent(["status"], { timeout: 20_000 }).trim();
       } catch (error) {
         return fail(`agent status 失败: ${error.message}`);
       }
       return ok({
+        platform: process.platform,
         agent_bin: agentBin(),
         home: homeDir(),
         allowed_roots: allowedRoots(),
+        root_delimiter: process.platform === "win32" ? ";" : ":",
         status,
       });
     }

@@ -6,10 +6,42 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import path, { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const BRIDGE_DIR = dirname(fileURLToPath(import.meta.url));
+
+export function rootDelimiter(platform = process.platform) {
+  return platform === "win32" ? ";" : ":";
+}
+
+export function splitRootList(raw, platform = process.platform) {
+  if (!raw) return [];
+  return raw
+    .split(rootDelimiter(platform))
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+export function isPathInsideRoot(target, root, pathApi = path) {
+  const absTarget = pathApi.resolve(target);
+  const absRoot = pathApi.resolve(root);
+  const rel = pathApi.relative(absRoot, absTarget);
+  if (rel === "") return true;
+  return !rel.startsWith("..") && !pathApi.isAbsolute(rel);
+}
+
+export function defaultRootList() {
+  const home = homedir();
+  const roots = [home, join(home, "Documents")];
+  if (process.platform === "win32") {
+    roots.push(join(home, "Desktop"));
+  } else {
+    const dev = join(home, "开发");
+    if (existsSync(dev)) roots.push(dev);
+  }
+  return [...new Set(roots)];
+}
 
 export function homeDir() {
   return process.env.CURSOR_WORKER_HOME || join(homedir(), ".codex", "cursor-worker");
@@ -23,19 +55,108 @@ export function runDir(runId) {
   return join(runsDir(), runId);
 }
 
+function looksLikeBinary(file) {
+  return existsSync(file) && !/\.(md|txt|json)$/i.test(file);
+}
+
+function firstWhereHit(name) {
+  try {
+    const out = execFileSync("where.exe", [name], {
+      encoding: "utf8",
+      timeout: 8_000,
+      windowsHide: true,
+    });
+    const lines = out
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => looksLikeBinary(line));
+    const exe = lines.find((line) => /\.exe$/i.test(line));
+    return exe || lines[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function firstWhichHit(name) {
+  try {
+    const out = execFileSync("which", [name], {
+      encoding: "utf8",
+      timeout: 8_000,
+    }).trim();
+    return looksLikeBinary(out) ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+function discoverAgentBin() {
+  const home = homedir();
+  const localAppData =
+    process.env.LOCALAPPDATA || join(home, "AppData", "Local");
+  const candidates =
+    process.platform === "win32"
+      ? [
+          join(localAppData, "cursor-agent", "cursor-agent.exe"),
+          join(localAppData, "cursor-agent", "agent.exe"),
+          join(home, ".local", "bin", "agent.exe"),
+          join(home, ".local", "bin", "cursor-agent.exe"),
+        ]
+      : [
+          join(home, ".local", "bin", "agent"),
+          join(home, ".local", "bin", "cursor-agent"),
+        ];
+  for (const file of candidates) {
+    if (looksLikeBinary(file)) return file;
+  }
+  if (process.platform === "win32") {
+    return (
+      firstWhereHit("cursor-agent.exe") ||
+      firstWhereHit("agent.exe") ||
+      firstWhereHit("cursor-agent") ||
+      firstWhereHit("agent") ||
+      candidates[0]
+    );
+  }
+  return firstWhichHit("agent") || firstWhichHit("cursor-agent") || candidates[0];
+}
+
+let cachedAgentBin;
+
 export function agentBin() {
-  return process.env.AGENT_BIN || join(homedir(), ".local", "bin", "agent");
+  if (process.env.AGENT_BIN) return process.env.AGENT_BIN;
+  if (!cachedAgentBin) cachedAgentBin = discoverAgentBin();
+  return cachedAgentBin;
+}
+
+export function agentNeedsShell(bin = agentBin()) {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(bin);
+}
+
+export function agentEnv() {
+  const dir = dirname(agentBin());
+  return {
+    ...process.env,
+    PATH: `${dir}${delimiter}${process.env.PATH || ""}`,
+  };
+}
+
+export function execAgent(args, extra = {}) {
+  return execFileSync(agentBin(), args, {
+    encoding: "utf8",
+    env: agentEnv(),
+    windowsHide: true,
+    shell: agentNeedsShell(),
+    ...extra,
+  });
 }
 
 export function allowedRoots() {
   const raw =
     process.env.CURSOR_WORKER_ROOTS ||
-    [join(homedir(), "开发"), join(homedir(), "Documents")].join(":");
-  return raw
-    .split(":")
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((item) => resolve(item));
+    defaultRootList().join(rootDelimiter());
+  return splitRootList(raw)
+    .map((item) => resolve(item))
+    .filter(Boolean);
 }
 
 export function newId(prefix) {
@@ -72,9 +193,7 @@ export function assertWorkspace(workspace) {
   if (!existsSync(abs)) {
     throw new Error(`workspace 不存在: ${abs}`);
   }
-  const ok = allowedRoots().some(
-    (root) => abs === root || abs.startsWith(`${root}/`)
-  );
+  const ok = allowedRoots().some((root) => isPathInsideRoot(abs, root));
   if (!ok) {
     throw new Error(
       `workspace 不在允许目录内: ${abs}。允许：${allowedRoots().join(", ")}`
@@ -104,11 +223,25 @@ export function isPidAlive(pid) {
   }
 }
 
+export function killPid(pid) {
+  if (!pid) return;
+  try {
+    if (process.platform === "win32") {
+      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+        timeout: 10_000,
+      });
+    } else {
+      process.kill(pid, "SIGTERM");
+    }
+  } catch {
+    // already gone
+  }
+}
+
 export function createCursorChat() {
-  const out = execFileSync(agentBin(), ["create-chat"], {
-    encoding: "utf8",
-    timeout: 15_000,
-  }).trim();
+  const out = execAgent(["create-chat"], { timeout: 15_000 }).trim();
   const sessionId = out.split(/\s+/).pop();
   if (!sessionId || sessionId.length < 8) {
     throw new Error(`create-chat 未返回有效 session_id: ${out}`);
@@ -120,7 +253,7 @@ export function parseEvents(runId) {
   const path = join(runDir(runId), "events.ndjson");
   if (!existsSync(path)) return [];
   return readFileSync(path, "utf8")
-    .split("\n")
+    .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
     .flatMap((line) => {

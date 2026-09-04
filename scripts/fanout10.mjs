@@ -41,6 +41,7 @@ function prepareWorkspace() {
 const child = spawn(process.execPath, [serverPath], {
   stdio: ["pipe", "pipe", "inherit"],
   env: process.env,
+  windowsHide: true,
 });
 
 const pending = new Map();

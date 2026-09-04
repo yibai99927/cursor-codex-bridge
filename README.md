@@ -4,7 +4,7 @@
 
 本仓库是一个本地 MCP 服务器：Codex 调用带 schema 的工具，服务器在后台拉起 `agent -p`。任务可以很长，也可以同一会话多轮续跑；互不依赖的模块可以同时派出多个独立 Cursor 子 agent。
 
-已在本机验证：10 个模块并行实现 + 每路 `followup` 续跑，10 个 `session_id` 互不相同，对话暗号全部对上。
+已在本机验证：10 个模块并行实现 + 每路 `followup` 续跑，10 个 `session_id` 互不相同，对话暗号全部对上。macOS / Linux / **原生 Windows** 用同一套代码；Windows 必须用分号白名单和 `cursor-agent.exe`，见下方「原生 Windows」。
 
 ## 给 AI 的摘要（先读这里）
 
@@ -15,7 +15,7 @@
 - 同一工人补刀：等上一轮结束后 `followup_cursor`（传 `run_id` 或 `session_id`）。同一 session 同时只能跑一轮。
 - `spawn_cursor` 立刻返回 `{ run_id, session_id, status }`。长任务用 `wait_cursor` / `get_cursor_status` 轮询到 `completed`，再自己看 diff、跑测试做验收。
 - `prompt` 必须自包含：目标、文件范围、验收标准、禁止事项。子 agent 看不到 Codex 对话。
-- `workspace` 必须是绝对路径，且落在 `CURSOR_WORKER_ROOTS` 内。
+- `workspace` 必须是绝对路径，且落在 `CURSOR_WORKER_ROOTS` 内。Windows 上多个根目录用分号 `;` 分隔，不要用冒号。
 - 并行任务必须划开文件范围，避免抢同一批文件。
 
 完整指挥官约定见 `templates/cursor-worker.SKILL.md`。
@@ -40,21 +40,32 @@
 
 ## 前置条件
 
-1. **Node.js** ≥ 20（`which node`，记下绝对路径）。
+1. **Node.js** ≥ 20。记下绝对路径：macOS/Linux 用 `which node`，Windows 用 `where.exe node`。
 2. **Cursor CLI** 已安装并登录：
+
+   macOS / Linux：
 
    ```bash
    curl https://cursor.com/install -fsS | bash
-   agent status    # 应显示已登录
+   agent status
    ```
 
-   常见路径：`~/.local/bin/agent`（与 `cursor-agent` 是同一个二进制）。
-3. **Codex** 已安装（ChatGPT 桌面端或 Codex CLI），配置文件在 `~/.codex/config.toml`。
+   常见路径：`~/.local/bin/agent`（与 `cursor-agent` 同一二进制）。
+
+   原生 Windows（PowerShell）：
+
+   ```powershell
+   irm 'https://cursor.com/install?win32=true' | iex
+   agent status
+   ```
+
+   常见路径：`%LocalAppData%\cursor-agent\cursor-agent.exe`。
+3. **Codex** 已安装（ChatGPT 桌面端或 Codex CLI）。配置：macOS/Linux 为 `~/.codex/config.toml`，Windows 为 `%USERPROFILE%\.codex\config.toml`。
 4. 工人要能联网访问 Cursor API（本机已登录即可；脚本环境也可设 `CURSOR_API_KEY`，不要把密钥写进仓库）。
 
 ## 搭建（给人或 AI 逐步做）
 
-以下路径以 macOS 为例，把 `/ABS/...` 换成真实绝对路径。
+把示例里的绝对路径换成你机器上的真实路径。TOML 里 Windows 路径请用正斜杠，例如 `C:/Users/YOU/...`。
 
 ### 1. 克隆本仓库
 
@@ -67,26 +78,34 @@ cd cursor-codex-bridge
 
 ### 2. 写入 Codex MCP
 
-把 `templates/config.toml.snippet` **追加**到 `~/.codex/config.toml`，不要整文件覆盖。至少改三处：
+把对应片段 **追加**到 Codex 的 `config.toml`，不要整文件覆盖。
 
-| 键 | 填什么 |
-|----|--------|
-| `command` | `which node` 的绝对路径 |
-| `args` | 本仓库 `server.mjs` 的绝对路径 |
-| `CURSOR_WORKER_ROOTS` | 允许改文件的根目录，冒号分隔 |
+| 系统 | 片段 | 根目录分隔符 |
+|------|------|----------------|
+| macOS / Linux | `templates/config.toml.snippet` | `:` |
+| 原生 Windows | `templates/config.toml.windows.snippet` | `;`（不能用 `:`，会和盘符 `C:` 冲突） |
 
-`AGENT_BIN` 用 `which agent`。`CURSOR_WORKER_HOME` 建议 `~/.codex/cursor-worker`（run 记录写在这里）。
+至少改：`command`（node 绝对路径）、`args`（本仓库 `server.mjs`）、`CURSOR_WORKER_ROOTS`。`AGENT_BIN` 用 `which agent` 或 `where.exe cursor-agent`。未设置 `AGENT_BIN` 时，桥会在 Unix 的 `~/.local/bin/agent` 和 Windows 的 `%LocalAppData%\cursor-agent\cursor-agent.exe` 里自动找。
 
 `tool_timeout_sec = 90` 只约束「一次 MCP 调用」。`spawn_cursor` 会马上返回，长任务靠轮询，不必把这项调成十几分钟。
 
 ### 3. 写入指挥官 skill
+
+macOS / Linux：
 
 ```bash
 mkdir -p ~/.codex/skills/cursor-worker
 cp templates/cursor-worker.SKILL.md ~/.codex/skills/cursor-worker/SKILL.md
 ```
 
-可选：把 `templates/AGENTS.md.snippet` 追加进 `~/.codex/AGENTS.md`，让新会话默认按指挥官模式工作。
+原生 Windows（PowerShell）：
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.codex\skills\cursor-worker" | Out-Null
+Copy-Item templates\cursor-worker.SKILL.md "$env:USERPROFILE\.codex\skills\cursor-worker\SKILL.md"
+```
+
+可选：把 `templates/AGENTS.md.snippet` 追加进 `~/.codex/AGENTS.md`（Windows 为 `%USERPROFILE%\.codex\AGENTS.md`）。
 
 ### 4. 重启 Codex
 
@@ -124,11 +143,9 @@ cp templates/cursor-worker.SKILL.md ~/.codex/skills/cursor-worker/SKILL.md
 ## 本机自检
 
 ```bash
-# 双工人并行（ask，不改文件）
-node scripts/smoke.mjs
-
-# 10 模块并行写文件 + 每路续跑（会打 Cursor、耗时约数分钟）
-node scripts/fanout10.mjs
+node scripts/test-paths.mjs   # 不联网，检查 Windows/Unix 路径逻辑
+node scripts/smoke.mjs        # 双工人并行（ask，不改文件）
+node scripts/fanout10.mjs     # 10 模块并行 + 续跑（耗时约数分钟）
 ```
 
 `fanout10` 在仓库内写 `.tmp-mega-app/`（已 gitignore）。
@@ -147,9 +164,9 @@ node scripts/fanout10.mjs
 
 | 变量 | 默认 | 含义 |
 |------|------|------|
-| `AGENT_BIN` | `~/.local/bin/agent` | Cursor CLI |
+| `AGENT_BIN` | Unix：`~/.local/bin/agent`；Windows：`%LocalAppData%\cursor-agent\cursor-agent.exe` | Cursor CLI |
 | `CURSOR_WORKER_HOME` | `~/.codex/cursor-worker` | run 数据根目录 |
-| `CURSOR_WORKER_ROOTS` | `~/开发:~/Documents` | workspace 白名单，冒号分隔 |
+| `CURSOR_WORKER_ROOTS` | 用户主目录 + Documents（Windows 另加 Desktop） | 白名单。Unix 用 `:`，Windows 用 `;` |
 | `CURSOR_API_KEY` | （可选） | 无交互登录时用；已 `agent login` 则可省略 |
 
 ## 已知边界
@@ -158,6 +175,7 @@ node scripts/fanout10.mjs
 - 10 路同时跑时，Cursor 侧可能自己排队，总时间短于「单路 × 10」，但不是完美线性。
 - `--resume` + `-p` 在当前 Cursor CLI（2026.08.25）上能保住对话；CLI 大版本升级后应再跑 `fanout10`。
 - 桥只包装本地 CLI，不是 Cursor 官方产品。
+- 原生 Windows 已适配路径白名单、CLI 定位和 `taskkill`；桌面端仍须完全退出后再开新会话。WSL 可按 Linux 小节配置。
 
 ## 仓库里有什么
 
@@ -165,7 +183,8 @@ node scripts/fanout10.mjs
 server.mjs                 MCP（stdio JSON-RPC，零依赖）
 run-job.mjs                后台拉起 agent
 lib.mjs                    路径校验、事件摘要、run 状态
-templates/                 给 Codex 复制的配置 / skill
+templates/                 给 Codex 复制的配置 / skill（含 Windows 片段）
+scripts/test-paths.mjs     路径白名单单测（含 win32）
 scripts/smoke.mjs          双路冒烟
 scripts/fanout10.mjs       10 路并发 + 续跑
 ```

@@ -1,8 +1,10 @@
 # 追加到 ~/.codex/config.toml（不要覆盖整个文件）。
+# macOS / Linux：根目录用冒号分隔。
+# Windows：请改用 templates/config.toml.windows.snippet（分号分隔，盘符不会被拆坏）。
 # 把下面三处改成你的机器路径：
-#   1) node 绝对路径（which node）
+#   1) node 绝对路径（which node / where.exe node）
 #   2) 本仓库里 server.mjs 的绝对路径
-#   3) CURSOR_WORKER_ROOTS：允许 Cursor 改文件的根目录，冒号分隔
+#   3) CURSOR_WORKER_ROOTS：允许 Cursor 改文件的根目录
 
 [mcp_servers.cursor_worker]
 command = "/opt/homebrew/bin/node"

@@ -11,6 +11,7 @@ const workspace = process.env.SMOKE_WORKSPACE || root;
 const child = spawn(process.execPath, [serverPath], {
   stdio: ["pipe", "pipe", "inherit"],
   env: process.env,
+  windowsHide: true,
 });
 
 const pending = new Map();

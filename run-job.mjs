@@ -4,6 +4,8 @@ import { createWriteStream } from "node:fs";
 import { join } from "node:path";
 import {
   agentBin,
+  agentEnv,
+  agentNeedsShell,
   readMeta,
   runDir,
   writeJson,
@@ -47,11 +49,10 @@ const stderr = createWriteStream(join(dir, "stderr.log"), { flags: "a" });
 
 const child = spawn(agentBin(), args, {
   cwd: meta.workspace,
-  env: {
-    ...process.env,
-    PATH: `${process.env.HOME}/.local/bin:${process.env.PATH || ""}`,
-  },
+  env: agentEnv(),
   stdio: ["ignore", "pipe", "pipe"],
+  windowsHide: true,
+  shell: agentNeedsShell(),
 });
 
 meta.pid = child.pid;
