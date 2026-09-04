@@ -4,7 +4,7 @@
 
 用户如果说「装 cursor-codex-bridge / 让 Codex 指挥 Cursor」：克隆或 `git pull` 本仓库，把本文当唯一操作手册。不要覆盖用户已有的 `~/.codex/config.toml` 整文件，不要提交 API key。
 
-仓库：https://github.com/yibai99927/cursor-codex-bridge （private，需有权限）
+仓库：https://github.com/yibai99927/cursor-codex-bridge （public）
 
 ---
 
