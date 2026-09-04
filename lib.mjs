@@ -48,8 +48,12 @@ export function defaultRootList() {
   return roots;
 }
 
+export function projectCodexDir() {
+  return join(BRIDGE_DIR, ".codex");
+}
+
 export function homeDir() {
-  return process.env.CURSOR_WORKER_HOME || join(homedir(), ".codex", "cursor-worker");
+  return process.env.CURSOR_WORKER_HOME || join(projectCodexDir(), "cursor-worker");
 }
 
 export function runsDir() {
@@ -261,6 +265,54 @@ export function rememberRun(runId) {
     ids.unshift(runId);
     writeJson(join(homeDir(), "index.json"), ids.slice(0, 200));
   });
+}
+
+export function maxRunning() {
+  const n = Number(process.env.CURSOR_WORKER_MAX_RUNNING || 4);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 4;
+}
+
+export function waitMaxSeconds() {
+  const n = Number(process.env.CURSOR_WORKER_WAIT_MAX || 300);
+  if (!Number.isFinite(n)) return 300;
+  return Math.min(Math.max(Math.floor(n), 5), 3600);
+}
+
+export function requireSession() {
+  const raw = (process.env.CURSOR_WORKER_REQUIRE_SESSION || "1").toLowerCase();
+  return raw !== "0" && raw !== "false" && raw !== "no";
+}
+
+export function commanderLockPath() {
+  return join(projectCodexDir(), "commander.lock");
+}
+
+export function commanderLockEnabled() {
+  const raw = (process.env.CURSOR_WORKER_COMMANDER_LOCK || "").toLowerCase();
+  if (raw === "0" || raw === "false" || raw === "off") return false;
+  if (raw === "1" || raw === "true" || raw === "on") return true;
+  return existsSync(commanderLockPath());
+}
+
+export function countRunning() {
+  let n = 0;
+  for (const id of listRunIds()) {
+    try {
+      const { meta } = refreshRun(id);
+      if (meta.status === "running" || meta.status === "starting") n += 1;
+    } catch {
+      // ignore corrupt runs
+    }
+  }
+  return n;
+}
+
+export function agentVersion() {
+  try {
+    return execAgent(["--version"], { timeout: 8_000 }).trim().split(/\r?\n/)[0];
+  } catch {
+    return "unknown";
+  }
 }
 
 export function isPidAlive(pid) {

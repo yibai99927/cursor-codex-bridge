@@ -1,6 +1,15 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
 import path from "node:path";
-import { isPathInsideRoot, rootDelimiter, splitRootList } from "../lib.mjs";
+import {
+  BRIDGE_DIR,
+  commanderLockPath,
+  homeDir,
+  isPathInsideRoot,
+  projectCodexDir,
+  rootDelimiter,
+  splitRootList,
+} from "../lib.mjs";
 
 function assert(cond, message) {
   if (!cond) throw new Error(message);
@@ -40,5 +49,22 @@ assert(
 );
 assert(isPathInsideRoot("/Users/a/开发/app", "/Users/a/开发", posix), "posix child");
 assert(!isPathInsideRoot("/tmp/x", "/Users/a/开发", posix), "posix outside");
+
+assert(
+  isPathInsideRoot(homeDir(), projectCodexDir()),
+  "run data stays in project .codex"
+);
+assert(
+  isPathInsideRoot(commanderLockPath(), projectCodexDir()),
+  "commander lock stays in project .codex"
+);
+assert(
+  isPathInsideRoot(projectCodexDir(), BRIDGE_DIR),
+  "project Codex dir is inside the repo"
+);
+assert(
+  existsSync(path.join(BRIDGE_DIR, ".agents", "skills", "cursor-worker", "SKILL.md")),
+  "project skill lives in .agents/skills"
+);
 
 console.log("path tests ok");

@@ -22,7 +22,7 @@
 - `workspace` 必须是绝对路径，且落在 `CURSOR_WORKER_ROOTS` 内。Windows 上多个根目录用分号 `;` 分隔，不要用冒号。
 - 并行任务必须划开文件范围，避免抢同一批文件。
 
-完整指挥官约定见 `templates/cursor-worker.SKILL.md`。
+完整指挥官约定见 `.agents/skills/cursor-worker/SKILL.md`。
 
 ## 角色怎么分工
 
@@ -64,7 +64,7 @@
    ```
 
    常见路径：`%LocalAppData%\cursor-agent\cursor-agent.exe`。
-3. **Codex** 已安装（ChatGPT 桌面端或 Codex CLI）。配置：macOS/Linux 为 `~/.codex/config.toml`，Windows 为 `%USERPROFILE%\.codex\config.toml`。
+3. **Codex** 已安装（ChatGPT 桌面端或 Codex CLI）。本桥**不改**用户全局 `~/.codex`；MCP / hooks / skill 写在本仓库 `.codex/`，且仅在 Codex 工作区为本仓库、项目已信任时加载。
 4. 工人要能联网访问 Cursor API（本机已登录即可；脚本环境也可设 `CURSOR_API_KEY`，不要把密钥写进仓库）。
 
 ## 搭建（给人或 AI 逐步做）
@@ -80,38 +80,32 @@ cd cursor-codex-bridge
 
 无需 `npm install`。MCP 是零依赖的 `server.mjs`。
 
-### 2. 写入 Codex MCP
+### 2. 生成本仓库 `.codex/`（不要改 `~/.codex`）
 
-把对应片段 **追加**到 Codex 的 `config.toml`，不要整文件覆盖。
+```bash
+node scripts/setup-project.mjs
+```
+
+脚本只写本仓库 `.codex/config.toml`（本机绝对路径 + `[[skills.config]]`）和 `.codex/cursor-worker/`。`CURSOR_WORKER_HOME` 默认是本仓库 `.codex/cursor-worker`。
+
+已进 git、setup 不会覆盖：`.agents/skills/cursor-worker/SKILL.md`、`.codex/hooks.json`。
+
+对照模板（不会被安装脚本写到用户家目录）：
 
 | 系统 | 片段 | 根目录分隔符 |
 |------|------|----------------|
-| macOS / Linux | `templates/config.toml.snippet` | `:` |
+| macOS / Linux | `templates/config.toml.snippet` 或 `.codex/config.toml.example` | `:` |
 | 原生 Windows | `templates/config.toml.windows.snippet` | `;`（不能用 `:`，会和盘符 `C:` 冲突） |
 
-至少改：`command`（node 绝对路径）、`args`（本仓库 `server.mjs`）、`CURSOR_WORKER_ROOTS`。`AGENT_BIN` 用 `which agent` 或 `where.exe cursor-agent`。未设置 `AGENT_BIN` 时，桥会在 Unix 的 `~/.local/bin/agent` 和 Windows 的 `%LocalAppData%\cursor-agent\cursor-agent.exe` 里自动找。
+未设置 `AGENT_BIN` 时，桥会在 Unix 的 `~/.local/bin/agent` 和 Windows 的 `%LocalAppData%\cursor-agent\cursor-agent.exe` 里自动找。
 
-`tool_timeout_sec = 90` 只约束「一次 MCP 调用」。`spawn_cursor` 会马上返回，长任务靠轮询，不必把这项调成十几分钟。
+`tool_timeout_sec` 只约束「一次 MCP 调用」。`spawn_cursor` 会马上返回，长任务靠轮询；setup 默认写成 360，大于 `wait_cursor` 上限 300。
 
-### 3. 写入指挥官 skill
+指挥官 skill 在 `.agents/skills/cursor-worker/SKILL.md`（Codex 扫描仓库 `.agents/skills`），hooks 在 `.codex/hooks.json`。不要复制到 `~/.codex/skills` 或 `~/.codex/hooks.json`。
 
-macOS / Linux：
+Codex 必须把**本仓库**当工作区并信任该项目，MCP 才会出现。工人要改的业务目录用 `spawn_cursor` 的 `workspace` 传入。
 
-```bash
-mkdir -p ~/.codex/skills/cursor-worker
-cp templates/cursor-worker.SKILL.md ~/.codex/skills/cursor-worker/SKILL.md
-```
-
-原生 Windows（PowerShell）：
-
-```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.codex\skills\cursor-worker" | Out-Null
-Copy-Item templates\cursor-worker.SKILL.md "$env:USERPROFILE\.codex\skills\cursor-worker\SKILL.md"
-```
-
-可选：把 `templates/AGENTS.md.snippet` 追加进 `~/.codex/AGENTS.md`（Windows 为 `%USERPROFILE%\.codex\AGENTS.md`）。
-
-### 4. 重启 Codex
+### 3. 重启 Codex
 
 **完全退出** ChatGPT / Codex 桌面端再打开（不是只关窗口），然后开一个**新会话**。旧会话不会加载新 MCP。
 
@@ -127,7 +121,7 @@ Copy-Item templates\cursor-worker.SKILL.md "$env:USERPROFILE\.codex\skills\curso
 | `spawn_cursor` | 新建独立 session，后台开工，立刻返回 `run_id` |
 | `followup_cursor` | 同一 session 再跑一轮（上一轮必须已结束） |
 | `get_cursor_status` | 廉价看进度 |
-| `wait_cursor` | 等到结束或 `max_seconds`（默认 45，上限 80） |
+| `wait_cursor` | 等到结束或 `max_seconds`（默认 45，上限 `CURSOR_WORKER_WAIT_MAX`，默认 300） |
 | `get_cursor_result` | 读终态；若仍在跑则返回当前进度，不假装完成 |
 | `cancel_cursor` | 杀掉还在跑的任务 |
 | `list_cursor_runs` | 并列最近若干 run（含 `task_name`） |
@@ -169,7 +163,7 @@ node scripts/fanout10.mjs     # 10 模块并行 + 续跑（耗时约数分钟）
 | 变量 | 默认 | 含义 |
 |------|------|------|
 | `AGENT_BIN` | Unix：`~/.local/bin/agent`；Windows：`%LocalAppData%\cursor-agent\cursor-agent.exe` | Cursor CLI |
-| `CURSOR_WORKER_HOME` | `~/.codex/cursor-worker` | run 数据根目录 |
+| `CURSOR_WORKER_HOME` | 本仓库 `.codex/cursor-worker` | run 数据根目录 |
 | `CURSOR_WORKER_ROOTS` | Documents（+ 开发 或 Desktop，若存在）。**不含整个 home** | 白名单。Unix `:`，Windows `;`。生产环境请显式配置 |
 | `CURSOR_API_KEY` | （可选） | 无交互登录时用；已 `agent login` 则可省略 |
 
@@ -189,8 +183,12 @@ llms.txt                   指向 AGENTS.md
 server.mjs                 MCP（stdio JSON-RPC，零依赖）
 run-job.mjs                后台拉起 agent
 lib.mjs                    路径校验、事件摘要、run 状态
-templates/                 给 Codex 复制的配置 / skill（含 Windows 片段）
+.agents/skills/            项目级 skill（Codex 会扫描）
+.codex/                    项目级 MCP 配置（setup 生成 config.toml）、hooks、commander.lock
+scripts/setup-project.mjs  只写本仓库 .codex/config.toml，不改 ~/.codex
+templates/                 对照用 MCP 片段；不要贴进用户全局 Codex 配置
 scripts/test-paths.mjs     路径白名单单测（含 win32）
 scripts/smoke.mjs          双路冒烟
 scripts/fanout10.mjs       10 路并发 + 续跑
+hooks/                     项目级 PreToolUse / SessionStart / UserPromptSubmit
 ```

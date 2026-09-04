@@ -6,8 +6,11 @@ import { join } from "node:path";
 import {
   BRIDGE_DIR,
   agentBin,
+  agentVersion,
   allowedRoots,
   assertWorkspace,
+  commanderLockEnabled,
+  countRunning,
   createCursorChat,
   ensureDir,
   execAgent,
@@ -15,12 +18,15 @@ import {
   isPidAlive,
   killPid,
   listRunIds,
+  maxRunning,
   newId,
   publicRun,
   readMeta,
   refreshRun,
   rememberRun,
+  requireSession,
   runDir,
+  waitMaxSeconds,
   writeMeta,
 } from "./lib.mjs";
 
@@ -28,7 +34,7 @@ const TOOLS = [
   {
     name: "spawn_cursor",
     description:
-      "异步派一个独立的 Cursor 子 agent。每次默认 create-chat，与其它正在跑的任务互不影响，可同时 spawn 多个做并行。立即返回 run_id / session_id。长任务用 wait_cursor 或 get_cursor_status 轮询。同一会话的后续轮次才用 followup_cursor。你是指挥官：只规划与验收，不要自己改业务代码。",
+      "异步派一个独立的 Cursor 子 agent。同时在跑的数量受 CURSOR_WORKER_MAX_RUNNING 限制（默认 4）。create-chat 失败则拒绝开工。长任务用 wait_cursor（上限见 CURSOR_WORKER_WAIT_MAX，默认 300 秒，且须小于 MCP tool_timeout_sec）。",
     inputSchema: {
       type: "object",
       properties: {
@@ -123,7 +129,7 @@ const TOOLS = [
         run_id: { type: "string" },
         max_seconds: {
           type: "number",
-          description: "最多等待秒数，默认 45，上限 80。",
+          description: "最多等待秒数。默认 45，上限为 CURSOR_WORKER_WAIT_MAX（默认 300）。MCP tool_timeout_sec 必须更大。",
         },
       },
       required: ["run_id"],
@@ -226,13 +232,28 @@ function launchRun({
   mode,
   worktree,
   worktreeName,
+  sessionCanary,
 }) {
   const abs = assertWorkspace(workspace);
   if (!existsSync(agentBin())) {
     throw new Error(`找不到 Cursor CLI: ${agentBin()}`);
   }
   const reuseSession = Boolean(sessionId);
+  if (!reuseSession) {
+    const running = countRunning();
+    const cap = maxRunning();
+    if (running >= cap) {
+      throw new Error(
+        `已有 ${running} 个 Cursor 工人在跑，上限 ${cap}（CURSOR_WORKER_MAX_RUNNING）。先 wait_cursor / cancel_cursor，或提高上限。`
+      );
+    }
+  }
   const chatId = reuseSession ? sessionId : createCursorChat();
+  if (!reuseSession && requireSession() && !chatId) {
+    throw new Error(
+      "create-chat 失败，拒绝无 session 开工（CURSOR_WORKER_REQUIRE_SESSION=1）。续跑将无法保证。"
+    );
+  }
   if (reuseSession) {
     const busy = sessionHasActiveRun(chatId);
     if (busy) {
@@ -243,6 +264,14 @@ function launchRun({
   }
 
   const runId = newId("run");
+  const canary = reuseSession ? null : `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const version = agentVersion();
+  let finalPrompt = prompt;
+  if (canary) {
+    finalPrompt = `${prompt}\n\n[cursor-bridge-canary:${canary}] 这是本会话校验码，禁止写入仓库任何文件。`;
+  } else if (reuseSession && sessionCanary) {
+    finalPrompt = `${prompt}\n\n[cursor-bridge-canary:${sessionCanary}] 续跑校验码应与首轮相同。若你不记得，停止改文件并说明会话可能已丢失。`;
+  }
   ensureDir(runDir(runId));
   const meta = {
     run_id: runId,
@@ -250,13 +279,15 @@ function launchRun({
     session_id: chatId,
     status: "starting",
     workspace: abs,
-    prompt,
+    prompt: finalPrompt,
     mode: mode === "ask" || mode === "plan" ? mode : null,
     model: model || null,
     sandbox: sandbox || null,
     approve_mcps: Boolean(approve_mcps),
     worktree: Boolean(worktree),
     worktree_name: worktreeName || null,
+    canary: canary || sessionCanary || null,
+    agent_version: version,
     started_at: new Date().toISOString(),
     pid: null,
     job_pid: null,
@@ -277,7 +308,10 @@ async function sleep(ms) {
 }
 
 async function waitRun(runId, maxSeconds) {
-  const cap = Math.min(Math.max(Number(maxSeconds) || 45, 1), 80);
+  const cap = Math.min(
+    Math.max(Number(maxSeconds) || 45, 1),
+    waitMaxSeconds()
+  );
   const deadline = Date.now() + cap * 1000;
   let latest = refreshRun(runId);
   while (Date.now() < deadline) {
@@ -324,6 +358,12 @@ async function dispatch(name, args) {
         allowed_roots: allowedRoots(),
         root_delimiter: process.platform === "win32" ? ";" : ":",
         status,
+        agent_version: agentVersion(),
+        running: countRunning(),
+        max_running: maxRunning(),
+        wait_max_seconds: waitMaxSeconds(),
+        commander_lock: commanderLockEnabled(),
+        require_session: requireSession(),
       });
     }
     case "spawn_cursor":
@@ -348,12 +388,14 @@ async function dispatch(name, args) {
       let sessionId = args.session_id;
       let taskName = args.task_name;
       let mode = args.mode;
+      let sessionCanary = null;
       if (args.run_id) {
         const prev = refreshRun(args.run_id).meta;
         workspace = workspace || prev.workspace;
         sessionId = sessionId || prev.session_id;
         taskName = taskName || prev.task_name;
         mode = mode || prev.mode;
+        sessionCanary = prev.canary || null;
       }
       if (!sessionId) throw new Error("没有可用的 session_id");
       return ok(
@@ -365,6 +407,7 @@ async function dispatch(name, args) {
             sessionId,
             taskName,
             mode,
+            sessionCanary,
           })
         )
       );

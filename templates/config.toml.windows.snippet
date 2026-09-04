@@ -1,16 +1,27 @@
-# 追加到 %USERPROFILE%\.codex\config.toml（不要覆盖整个文件）。
+# 仅作为本仓库 .codex/config.toml 的对照模板。
+# 实际文件由 `node scripts/setup-project.mjs` 生成。
+# 禁止追加到 %USERPROFILE%\.codex\config.toml。
 # TOML 里用正斜杠最省事，不要用未转义的反斜杠。
-# 把 YOU 换成你的 Windows 用户名，并用 where.exe node / where.exe cursor-agent 核对路径。
 
 [mcp_servers.cursor_worker]
 command = "C:/Program Files/nodejs/node.exe"
 args = ["C:/Users/YOU/src/cursor-codex-bridge/server.mjs"]
 startup_timeout_sec = 20
-tool_timeout_sec = 90
+tool_timeout_sec = 360
 enabled = true
 
 [mcp_servers.cursor_worker.env]
 AGENT_BIN = "C:/Users/YOU/AppData/Local/cursor-agent/cursor-agent.exe"
-CURSOR_WORKER_HOME = "C:/Users/YOU/.codex/cursor-worker"
+CURSOR_WORKER_HOME = "C:/Users/YOU/src/cursor-codex-bridge/.codex/cursor-worker"
 # Windows 用分号分隔多个根目录，不要用冒号（会和盘符 C: 冲突）
-CURSOR_WORKER_ROOTS = "C:/Users/YOU;C:/Users/YOU/Documents;C:/Users/YOU/Desktop"
+CURSOR_WORKER_ROOTS = "C:/Users/YOU/src;C:/Users/YOU/Documents;C:/Users/YOU/Desktop"
+CURSOR_WORKER_MAX_RUNNING = "4"
+CURSOR_WORKER_WAIT_MAX = "300"
+CURSOR_WORKER_REQUIRE_SESSION = "1"
+
+[features]
+hooks = true
+
+[[skills.config]]
+enabled = true
+path = "C:/Users/YOU/src/cursor-codex-bridge/.agents/skills/cursor-worker"

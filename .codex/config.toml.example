@@ -1,17 +1,16 @@
-# 仅作为本仓库 .codex/config.toml 的对照模板。
-# 实际文件由 `node scripts/setup-project.mjs` 生成。
-# 禁止追加到 ~/.codex/config.toml。
-# macOS / Linux：根目录用冒号分隔。Windows 请看 templates/config.toml.windows.snippet。
+# 示例。真正给 Codex 用的 MCP 段是本仓库 .codex/config.toml，
+# 由 `node scripts/setup-project.mjs` 生成。禁止写入 ~/.codex。
+# skill 正文在仓库 `.agents/skills/cursor-worker/`（Codex 会扫描该目录）。
 
 [mcp_servers.cursor_worker]
-command = "/opt/homebrew/bin/node"
+command = "/ABS/PATH/TO/node"
 args = ["/ABS/PATH/TO/cursor-codex-bridge/server.mjs"]
 startup_timeout_sec = 20
 tool_timeout_sec = 360
 enabled = true
 
 [mcp_servers.cursor_worker.env]
-AGENT_BIN = "/ABS/PATH/TO/home/.local/bin/agent"
+AGENT_BIN = "/ABS/PATH/TO/agent"
 CURSOR_WORKER_HOME = "/ABS/PATH/TO/cursor-codex-bridge/.codex/cursor-worker"
 CURSOR_WORKER_ROOTS = "/ABS/PATH/TO/your/dev:/ABS/PATH/TO/your/Documents"
 CURSOR_WORKER_MAX_RUNNING = "4"
