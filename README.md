@@ -170,7 +170,7 @@ node scripts/fanout10.mjs     # 10 模块并行 + 续跑（耗时约数分钟）
 |------|------|------|
 | `AGENT_BIN` | Unix：`~/.local/bin/agent`；Windows：`%LocalAppData%\cursor-agent\cursor-agent.exe` | Cursor CLI |
 | `CURSOR_WORKER_HOME` | `~/.codex/cursor-worker` | run 数据根目录 |
-| `CURSOR_WORKER_ROOTS` | 用户主目录 + Documents（Windows 另加 Desktop） | 白名单。Unix 用 `:`，Windows 用 `;` |
+| `CURSOR_WORKER_ROOTS` | Documents（+ 开发 或 Desktop，若存在）。**不含整个 home** | 白名单。Unix `:`，Windows `;`。生产环境请显式配置 |
 | `CURSOR_API_KEY` | （可选） | 无交互登录时用；已 `agent login` 则可省略 |
 
 ## 已知边界

@@ -113,11 +113,11 @@ Copy-Item templates\cursor-worker.SKILL.md "$env:USERPROFILE\.codex\skills\curso
 
 1. 需要时先 `cursor_bridge_health`。
 2. 把用户目标拆成互不依赖的子任务；每个 `prompt` 自包含：目标、文件范围、验收标准、禁止事项。
-3. **并行**：每个子任务一次 `spawn_cursor`，不同 `task_name`，`workspace` 为绝对路径且落在 `CURSOR_WORKER_ROOTS` 内。不要因为已有 run 在跑就串行。
-4. `spawn_cursor` 立刻返回 `run_id` / `session_id`。短任务 `wait_cursor`；长任务 `get_cursor_status` 或多次 `wait_cursor`（单次最多约 80 秒）。
-5. `completed` 后你验收：看 diff、跑测试。
+3. **并行**：每个子任务一次 `spawn_cursor`，不同 `task_name`，`workspace` 为绝对路径且落在 `CURSOR_WORKER_ROOTS` 内。同仓库并行优先 `worktree: true`，否则必须划开文件。不要因为已有 run 在跑就串行。
+4. `spawn_cursor` 立刻返回 `run_id` / `session_id`。短任务 `wait_cursor`；长任务反复 `get_cursor_status` 或多次 `wait_cursor`（单次最多约 80 秒）。没有「做完自动喊你」。
+5. `completed` 后你验收：`git diff`、跑测试。不要只信工具返回的 `summary`。
 6. 同一工人补刀：`followup_cursor`（上一轮必须结束）。新开一条线：再 `spawn_cursor`。
-7. 向用户按 `task_name` 汇报。并行任务必须划开文件范围。
+7. 向用户按 `task_name` 汇报。
 
 Windows：`CURSOR_WORKER_ROOTS` 只用分号。
 
@@ -129,3 +129,10 @@ Windows：`CURSOR_WORKER_ROOTS` 只用分号。
 - 不要把 `CURSOR_API_KEY` 或 `auth.json` 写进仓库。
 - 不要用 Unix 冒号白名单配原生 Windows。
 - 不要在安装时删除用户已有的 `[mcp_servers.*]` 其它块。
+
+## 8. 修不掉、只能规避的限制
+
+- Cursor 账号限流：工人会变慢或失败；桥会对短时 429/断线重试一次，仍失败就换时间或减并发。
+- `--resume` + `-p` 非官方保证：CLI 大版本后重跑 `node scripts/fanout10.mjs`。
+- Codex 旧会话不加载新 MCP：必须完全退出再开新会话。
+- Skill 不能硬拦截 Codex 自己改代码：靠本文件 + 用户口头约定。

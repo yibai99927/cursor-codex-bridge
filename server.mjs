@@ -63,6 +63,15 @@ const TOOLS = [
           type: "boolean",
           description: "是否自动批准 Cursor 侧 MCP。默认 false。",
         },
+        worktree: {
+          type: "boolean",
+          description:
+            "在独立 git worktree 里执行，避免并行工人抢同一工作区。默认 false。",
+        },
+        worktree_name: {
+          type: "string",
+          description: "可选 worktree 名。worktree=true 且未命名时由 CLI 生成。",
+        },
       },
       required: ["prompt", "workspace"],
     },
@@ -168,15 +177,20 @@ function fail(message) {
   };
 }
 
-let launchChain = Promise.resolve();
+let sessionChains = new Map();
 
-function enqueueLaunch(fn) {
-  const run = launchChain.then(fn, fn);
-  launchChain = run.then(
-    () => {},
-    () => {}
+function enqueueSession(sessionId, fn) {
+  const key = sessionId || "*";
+  const prev = sessionChains.get(key) || Promise.resolve();
+  const next = prev.then(fn, fn);
+  sessionChains.set(
+    key,
+    next.then(
+      () => {},
+      () => {}
+    )
   );
-  return run;
+  return next;
 }
 
 function startJob(runId) {
@@ -210,13 +224,15 @@ function launchRun({
   sessionId,
   taskName,
   mode,
+  worktree,
+  worktreeName,
 }) {
   const abs = assertWorkspace(workspace);
   if (!existsSync(agentBin())) {
     throw new Error(`找不到 Cursor CLI: ${agentBin()}`);
   }
   const reuseSession = Boolean(sessionId);
-  const chatId = sessionId || createCursorChat();
+  const chatId = reuseSession ? sessionId : createCursorChat();
   if (reuseSession) {
     const busy = sessionHasActiveRun(chatId);
     if (busy) {
@@ -239,6 +255,8 @@ function launchRun({
     model: model || null,
     sandbox: sandbox || null,
     approve_mcps: Boolean(approve_mcps),
+    worktree: Boolean(worktree),
+    worktree_name: worktreeName || null,
     started_at: new Date().toISOString(),
     pid: null,
     job_pid: null,
@@ -310,17 +328,17 @@ async function dispatch(name, args) {
     }
     case "spawn_cursor":
       return ok(
-        await enqueueLaunch(() =>
-          launchRun({
-            prompt: args.prompt,
-            workspace: args.workspace,
-            model: args.model,
-            sandbox: args.sandbox,
-            approve_mcps: args.approve_mcps,
-            taskName: args.task_name,
-            mode: args.mode,
-          })
-        )
+        launchRun({
+          prompt: args.prompt,
+          workspace: args.workspace,
+          model: args.model,
+          sandbox: args.sandbox,
+          approve_mcps: args.approve_mcps,
+          taskName: args.task_name,
+          mode: args.mode,
+          worktree: args.worktree,
+          worktreeName: args.worktree_name,
+        })
       );
     case "followup_cursor": {
       if (!args.run_id && !args.session_id) {
@@ -339,7 +357,7 @@ async function dispatch(name, args) {
       }
       if (!sessionId) throw new Error("没有可用的 session_id");
       return ok(
-        await enqueueLaunch(() =>
+        await enqueueSession(sessionId, () =>
           launchRun({
             prompt: args.prompt,
             workspace,

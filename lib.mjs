@@ -3,6 +3,8 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmdirSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -33,14 +35,17 @@ export function isPathInsideRoot(target, root, pathApi = path) {
 
 export function defaultRootList() {
   const home = homedir();
-  const roots = [home, join(home, "Documents")];
+  const roots = [];
+  const documents = join(home, "Documents");
+  if (existsSync(documents)) roots.push(documents);
   if (process.platform === "win32") {
-    roots.push(join(home, "Desktop"));
+    const desktop = join(home, "Desktop");
+    if (existsSync(desktop)) roots.push(desktop);
   } else {
     const dev = join(home, "开发");
     if (existsSync(dev)) roots.push(dev);
   }
-  return [...new Set(roots)];
+  return roots;
 }
 
 export function homeDir() {
@@ -167,6 +172,43 @@ export function ensureDir(path) {
   mkdirSync(path, { recursive: true });
 }
 
+export function sleepSync(ms) {
+  const buf = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(buf, 0, 0, ms);
+}
+
+export function withIndexLock(fn) {
+  ensureDir(homeDir());
+  const lockDir = join(homeDir(), ".index.lock");
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    try {
+      mkdirSync(lockDir);
+      break;
+    } catch {
+      try {
+        const age = Date.now() - statSync(lockDir).mtimeMs;
+        if (age > 30_000) rmdirSync(lockDir);
+      } catch {
+        // ignore
+      }
+      sleepSync(25);
+    }
+  }
+  if (!existsSync(lockDir)) {
+    throw new Error("无法获取 run 索引锁");
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      rmdirSync(lockDir);
+    } catch {
+      // ignore
+    }
+  }
+}
+
 export function readJson(path, fallback = null) {
   if (!existsSync(path)) return fallback;
   return JSON.parse(readFileSync(path, "utf8"));
@@ -193,10 +235,16 @@ export function assertWorkspace(workspace) {
   if (!existsSync(abs)) {
     throw new Error(`workspace 不存在: ${abs}`);
   }
-  const ok = allowedRoots().some((root) => isPathInsideRoot(abs, root));
+  const roots = allowedRoots();
+  if (!roots.length) {
+    throw new Error(
+      "未配置可用的 CURSOR_WORKER_ROOTS（默认不再包含整个用户主目录）。请在 Codex MCP env 里设置。"
+    );
+  }
+  const ok = roots.some((root) => isPathInsideRoot(abs, root));
   if (!ok) {
     throw new Error(
-      `workspace 不在允许目录内: ${abs}。允许：${allowedRoots().join(", ")}`
+      `workspace 不在允许目录内: ${abs}。允许：${roots.join(", ") || "(空)"}。请设置 CURSOR_WORKER_ROOTS。`
     );
   }
   return abs;
@@ -208,9 +256,11 @@ export function listRunIds() {
 }
 
 export function rememberRun(runId) {
-  const ids = listRunIds().filter((id) => id !== runId);
-  ids.unshift(runId);
-  writeJson(join(homeDir(), "index.json"), ids.slice(0, 200));
+  withIndexLock(() => {
+    const ids = listRunIds().filter((id) => id !== runId);
+    ids.unshift(runId);
+    writeJson(join(homeDir(), "index.json"), ids.slice(0, 200));
+  });
 }
 
 export function isPidAlive(pid) {
@@ -223,6 +273,43 @@ export function isPidAlive(pid) {
   }
 }
 
+export function processCommandLine(pid) {
+  if (!pid) return null;
+  try {
+    if (process.platform === "win32") {
+      const out = execFileSync(
+        "tasklist",
+        ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"],
+        { encoding: "utf8", timeout: 5_000, windowsHide: true }
+      ).toLowerCase();
+      return out.trim() || null;
+    }
+    return execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+      encoding: "utf8",
+      timeout: 5_000,
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+export function isBridgePid(pid, kind) {
+  if (!isPidAlive(pid)) return false;
+  const cmd = processCommandLine(pid);
+  if (!cmd) return true;
+  const lower = cmd.toLowerCase();
+  if (kind === "job") {
+    if (process.platform === "win32") return lower.includes("node.exe") || lower.includes("node");
+    return lower.includes("run-job.mjs");
+  }
+  return (
+    lower.includes("cursor-agent") ||
+    lower.includes("cursor\\agent") ||
+    /(^|[\\/ ])agent(\.exe)?(\s|$)/.test(lower) ||
+    lower.includes("agent.exe")
+  );
+}
+
 export function killPid(pid) {
   if (!pid) return;
   try {
@@ -232,8 +319,28 @@ export function killPid(pid) {
         windowsHide: true,
         timeout: 10_000,
       });
-    } else {
+      return;
+    }
+    try {
+      process.kill(-pid, "SIGTERM");
+    } catch {
+      // ignore
+    }
+    try {
       process.kill(pid, "SIGTERM");
+    } catch {
+      // ignore
+    }
+    sleepSync(200);
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      // ignore
+    }
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // ignore
     }
   } catch {
     // already gone
@@ -241,19 +348,30 @@ export function killPid(pid) {
 }
 
 export function createCursorChat() {
-  const out = execAgent(["create-chat"], { timeout: 15_000 }).trim();
-  const sessionId = out.split(/\s+/).pop();
-  if (!sessionId || sessionId.length < 8) {
-    throw new Error(`create-chat 未返回有效 session_id: ${out}`);
+  let lastError = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const out = execAgent(["create-chat"], { timeout: 15_000 }).trim();
+      const sessionId = out.split(/\s+/).pop();
+      if (sessionId && sessionId.length >= 8) return sessionId;
+      lastError = `create-chat 未返回有效 session_id: ${out}`;
+    } catch (error) {
+      lastError = error.message;
+    }
+    sleepSync(400 * (attempt + 1));
   }
-  return sessionId;
+  return null;
 }
 
 export function parseEvents(runId) {
   const path = join(runDir(runId), "events.ndjson");
   if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
-    .split(/\r?\n/)
+  const raw = readFileSync(path, "utf8");
+  const lines = raw.split(/\r?\n/);
+  if (raw.length > 0 && !/\r?\n$/.test(raw)) {
+    lines.pop();
+  }
+  return lines
     .map((line) => line.trim())
     .filter(Boolean)
     .flatMap((line) => {
@@ -265,6 +383,21 @@ export function parseEvents(runId) {
     });
 }
 
+function collectToolPaths(value, acc = []) {
+  if (!value || typeof value !== "object") return acc;
+  for (const [key, entry] of Object.entries(value)) {
+    if (
+      (key === "path" || key === "file" || key === "target") &&
+      typeof entry === "string"
+    ) {
+      acc.push(entry);
+    } else if (entry && typeof entry === "object") {
+      collectToolPaths(entry, acc);
+    }
+  }
+  return acc;
+}
+
 export function summarizeEvents(events) {
   let sessionId = null;
   let resultText = "";
@@ -273,6 +406,7 @@ export function summarizeEvents(events) {
   let isError = false;
   let durationMs = null;
   const tools = [];
+  const edited = [];
 
   for (const event of events) {
     if (event.session_id) sessionId = event.session_id;
@@ -287,16 +421,26 @@ export function summarizeEvents(events) {
       if (text) lastAssistant = text;
     }
     if (event.type === "tool_call") {
+      const blob = event.tool_call || event;
+      const paths = collectToolPaths(blob);
+      const keys = Object.keys(event.tool_call || {}).filter(
+        (key) => key.toLowerCase().includes("tool") || key.endsWith("Call")
+      );
       const name =
         event.subtype ||
-        Object.keys(event.tool_call || event)[0] ||
+        keys[0] ||
+        Object.keys(event.tool_call || {})[0] ||
         "tool";
-      const path =
-        event.tool_call?.writeToolCall?.args?.path ||
-        event.tool_call?.readToolCall?.args?.path ||
-        event.path ||
-        "";
+      const path = paths[0] || "";
       tools.push(path ? `${name} ${path}` : String(name));
+      for (const item of paths) {
+        if (
+          /write|edit|apply|delete/i.test(name) ||
+          /write|edit|apply|delete/i.test(JSON.stringify(blob).slice(0, 400))
+        ) {
+          edited.push(item);
+        }
+      }
     }
     if (event.type === "result") {
       resultText = event.result || "";
@@ -314,6 +458,7 @@ export function summarizeEvents(events) {
     durationMs,
     tools: tools.slice(-12),
     toolCount: tools.length,
+    edited_paths: [...new Set(edited)].slice(-20),
   };
 }
 
@@ -324,8 +469,8 @@ export function refreshRun(runId) {
   const events = parseEvents(runId);
   const summary = summarizeEvents(events);
   const exit = readJson(join(runDir(runId), "exit.json"));
-  const agentAlive = isPidAlive(meta.pid);
-  const jobAlive = isPidAlive(meta.job_pid);
+  const agentAlive = isBridgePid(meta.pid, "agent");
+  const jobAlive = isBridgePid(meta.job_pid, "job");
   const startedMs = meta.started_at ? Date.parse(meta.started_at) : Date.now();
   const startingGrace = Date.now() - startedMs < 20_000;
   const stillWorking =
@@ -343,6 +488,7 @@ export function refreshRun(runId) {
     meta.progress = summary.lastThinking || meta.progress;
     meta.tools = summary.tools;
     meta.tool_count = summary.toolCount;
+    meta.edited_paths = summary.edited_paths;
     meta.duration_ms = summary.durationMs;
     if (summary.isError) meta.status = "failed";
   } else if (
@@ -356,6 +502,7 @@ export function refreshRun(runId) {
     meta.summary = summary.resultText || summary.lastAssistant;
     meta.tools = summary.tools;
     meta.tool_count = summary.toolCount;
+    meta.edited_paths = summary.edited_paths;
   } else if (
     (meta.status === "running" || meta.status === "starting") &&
     !stillWorking &&
@@ -369,6 +516,7 @@ export function refreshRun(runId) {
     meta.progress = summary.lastThinking || summary.lastAssistant || meta.progress;
     meta.tools = summary.tools;
     meta.tool_count = summary.toolCount;
+    meta.edited_paths = summary.edited_paths;
     meta.summary = summary.lastAssistant || meta.summary;
   }
 
@@ -390,6 +538,7 @@ export function publicRun(meta) {
     duration_ms: meta.duration_ms ?? null,
     tool_count: meta.tool_count ?? 0,
     recent_tools: meta.tools ?? [],
+    edited_paths: meta.edited_paths ?? [],
     progress: meta.progress ?? "",
     summary: meta.summary ?? "",
     exit_code: meta.exit_code ?? null,

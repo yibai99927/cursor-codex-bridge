@@ -24,4 +24,5 @@ description: 把编码实现外包给 Cursor CLI。Codex 只做规划与验收�
 
 - `workspace` 必须是绝对路径，且在允许根目录内。
 - 派活说明写全。子 agent 看不到你们的对话。
-- 不要两个工人同时改同一批文件；并行任务请划开文件范围。
+- 不要两个工人同时改同一批文件；并行请划开范围，或 `spawn_cursor` 设 `worktree: true`。
+- 验收看 git diff / 测试，不要只信 `summary`。长任务必须轮询到终态。
