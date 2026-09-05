@@ -39,7 +39,8 @@
  server.mjs（长期活着）
       │  后台进程
       ▼
- Cursor CLI  agent -p --force --trust --resume <session>
+ Cursor CLI  cursor-agent acp   （session/new · prompt · load）
+      或 agy -p（降级）
 ```
 
 ## 前置条件
@@ -126,7 +127,7 @@ Codex 必须把**本仓库**当工作区并信任该项目，MCP 才会出现。
 | `cancel_cursor` | 杀掉还在跑的任务 |
 | `list_cursor_runs` | 并列最近若干 run（含 `task_name`） |
 
-`spawn_cursor` 常用参数：`prompt`、`workspace`（必填），`task_name`、`mode`（`agent` / `ask` / `plan`）、`model`、`sandbox`、`approve_mcps`。
+`spawn_cursor` 常用参数：`prompt`、`workspace`（必填），`backend`（`cursor` 默认走 ACP，`agy` 为 `-p` 降级），`task_name`、`mode`（`agent` / `ask` / `plan`）、`model`、`sandbox`、`approve_mcps`。
 
 ## 并行与续跑
 
@@ -162,7 +163,11 @@ node scripts/fanout10.mjs     # 10 模块并行 + 续跑（耗时约数分钟）
 
 | 变量 | 默认 | 含义 |
 |------|------|------|
-| `AGENT_BIN` | Unix：`~/.local/bin/agent`；Windows：`%LocalAppData%\cursor-agent\cursor-agent.exe` | Cursor CLI |
+| `AGENT_BIN` | Unix：`~/.local/bin/cursor-agent`；Windows：`%LocalAppData%\cursor-agent\cursor-agent.exe` | Cursor CLI（优先 `cursor-agent`，避免和 Grok 的 `agent` 撞名） |
+| `AGY_BIN` | `~/.local/bin/agy`（若存在） | Antigravity CLI；`backend=agy` 时用 |
+| `CURSOR_WORKER_DEFAULT_BACKEND` | `cursor` | `cursor` 或 `agy` |
+| `CURSOR_WORKER_DEFAULT_MODEL` | `cursor-grok-4.6-xhigh-fast` | Cursor 工人默认模型（Grok 4.6 Extra High Fast） |
+| `CURSOR_WORKER_CURSOR_TRANSPORT` | `acp` | Cursor 工人协议。`print` 回退到旧的 `agent -p` |
 | `CURSOR_WORKER_HOME` | 本仓库 `.codex/cursor-worker` | run 数据根目录 |
 | `CURSOR_WORKER_ROOTS` | Documents（+ 开发 或 Desktop，若存在）。**不含整个 home** | 白名单。Unix `:`，Windows `;`。生产环境请显式配置 |
 | `CURSOR_API_KEY` | （可选） | 无交互登录时用；已 `agent login` 则可省略 |
@@ -171,7 +176,8 @@ node scripts/fanout10.mjs     # 10 模块并行 + 续跑（耗时约数分钟）
 
 - Codex 侧没有「子任务完成自动插回对话」的 hook，长任务要指挥官轮询。
 - 10 路同时跑时，Cursor 侧可能自己排队，总时间短于「单路 × 10」，但不是完美线性。
-- `--resume` + `-p` 在当前 Cursor CLI（2026.08.25）上能保住对话；CLI 大版本升级后应再跑 `fanout10`。
+- Cursor 默认走 ACP（`session/new` / `session/load`）。`agy` 还没有官方 ACP，只有 `-p` 降级，followup 不可靠。
+- 设 `CURSOR_WORKER_CURSOR_TRANSPORT=print` 可把 Cursor 工人退回旧的 `agent -p --resume`。
 - 桥只包装本地 CLI，不是 Cursor 官方产品。
 - 原生 Windows 已适配路径白名单、CLI 定位和 `taskkill`；桌面端仍须完全退出后再开新会话。WSL 可按 Linux 小节配置。
 
@@ -181,7 +187,9 @@ node scripts/fanout10.mjs     # 10 模块并行 + 续跑（耗时约数分钟）
 AGENTS.md                  给 agent 的安装+使用说明书（拉取后先读这个）
 llms.txt                   指向 AGENTS.md
 server.mjs                 MCP（stdio JSON-RPC，零依赖）
-run-job.mjs                后台拉起 agent
+run-job.mjs                后台拉起工人（Cursor ACP 或 print）
+acp-client.mjs             ACP JSON-RPC 客户端
+backends/                  cursor-acp、agy/cursor -p
 lib.mjs                    路径校验、事件摘要、run 状态
 .agents/skills/            项目级 skill（Codex 会扫描）
 .codex/                    项目级 MCP 配置（setup 生成 config.toml）、hooks、commander.lock

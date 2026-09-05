@@ -9,9 +9,14 @@ import {
   agentVersion,
   allowedRoots,
   assertWorkspace,
+  agyBin,
   commanderLockEnabled,
   countRunning,
   createCursorChat,
+  cursorTransport,
+  defaultBackend,
+  defaultCursorModel,
+  resolveCursorModel,
   ensureDir,
   execAgent,
   homeDir,
@@ -25,6 +30,7 @@ import {
   refreshRun,
   rememberRun,
   requireSession,
+  resolveWorker,
   runDir,
   waitMaxSeconds,
   writeMeta,
@@ -34,7 +40,7 @@ const TOOLS = [
   {
     name: "spawn_cursor",
     description:
-      "异步派一个独立的 Cursor 子 agent。同时在跑的数量受 CURSOR_WORKER_MAX_RUNNING 限制（默认 4）。create-chat 失败则拒绝开工。长任务用 wait_cursor（上限见 CURSOR_WORKER_WAIT_MAX，默认 300 秒，且须小于 MCP tool_timeout_sec）。",
+      "异步派一个独立工人。默认 Cursor，走 ACP（session/new + session/prompt）。backend=agy 时降级为 agy -p。同时在跑的数量受 CURSOR_WORKER_MAX_RUNNING 限制（默认 4）。长任务用 wait_cursor。",
     inputSchema: {
       type: "object",
       properties: {
@@ -58,7 +64,8 @@ const TOOLS = [
         },
         model: {
           type: "string",
-          description: "可选。Cursor 模型 id，例如 composer-2.5。",
+          description:
+            "可选。Cursor 模型 id。默认 cursor-grok-4.6-xhigh-fast（Grok 4.6 Extra High Fast）。",
         },
         sandbox: {
           type: "string",
@@ -77,6 +84,12 @@ const TOOLS = [
         worktree_name: {
           type: "string",
           description: "可选 worktree 名。worktree=true 且未命名时由 CLI 生成。",
+        },
+        backend: {
+          type: "string",
+          enum: ["cursor", "agy"],
+          description:
+            "工人后端。默认 cursor（ACP）。agy 是 Antigravity CLI 的 -p 降级，无可靠续跑。",
         },
       },
       required: ["prompt", "workspace"],
@@ -105,6 +118,11 @@ const TOOLS = [
         task_name: {
           type: "string",
           description: "可选。这一轮的短名，默认沿用上一轮。",
+        },
+        backend: {
+          type: "string",
+          enum: ["cursor", "agy"],
+          description: "可选。默认沿用上一轮。",
         },
       },
       required: ["prompt"],
@@ -165,7 +183,7 @@ const TOOLS = [
   },
   {
     name: "cursor_bridge_health",
-    description: "检查 Cursor CLI 是否已登录、二进制是否可用。派活前可先调用。",
+    description: "检查 Cursor CLI / agy 是否可用，以及默认 backend 与 Cursor 传输（acp 或 print）。",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -233,26 +251,32 @@ function launchRun({
   worktree,
   worktreeName,
   sessionCanary,
+  backend,
 }) {
   const abs = assertWorkspace(workspace);
-  if (!existsSync(agentBin())) {
-    throw new Error(`找不到 Cursor CLI: ${agentBin()}`);
-  }
+  const worker = resolveWorker(backend);
   const reuseSession = Boolean(sessionId);
   if (!reuseSession) {
     const running = countRunning();
     const cap = maxRunning();
     if (running >= cap) {
       throw new Error(
-        `已有 ${running} 个 Cursor 工人在跑，上限 ${cap}（CURSOR_WORKER_MAX_RUNNING）。先 wait_cursor / cancel_cursor，或提高上限。`
+        `已有 ${running} 个工人在跑，上限 ${cap}（CURSOR_WORKER_MAX_RUNNING）。先 wait_cursor / cancel_cursor，或提高上限。`
       );
     }
   }
-  const chatId = reuseSession ? sessionId : createCursorChat();
-  if (!reuseSession && requireSession() && !chatId) {
-    throw new Error(
-      "create-chat 失败，拒绝无 session 开工（CURSOR_WORKER_REQUIRE_SESSION=1）。续跑将无法保证。"
-    );
+  let chatId = reuseSession ? sessionId : null;
+  if (
+    !reuseSession &&
+    worker.backend === "cursor" &&
+    worker.transport === "print"
+  ) {
+    chatId = createCursorChat();
+    if (requireSession() && !chatId) {
+      throw new Error(
+        "create-chat 失败，拒绝无 session 开工（CURSOR_WORKER_REQUIRE_SESSION=1）。续跑将无法保证。"
+      );
+    }
   }
   if (reuseSession) {
     const busy = sessionHasActiveRun(chatId);
@@ -281,12 +305,16 @@ function launchRun({
     workspace: abs,
     prompt: finalPrompt,
     mode: mode === "ask" || mode === "plan" ? mode : null,
-    model: model || null,
+    model: worker.backend === "cursor" ? resolveCursorModel(model) : model || null,
     sandbox: sandbox || null,
     approve_mcps: Boolean(approve_mcps),
     worktree: Boolean(worktree),
     worktree_name: worktreeName || null,
     canary: canary || sessionCanary || null,
+    backend: worker.backend,
+    transport: worker.transport,
+    worker_bin: worker.bin,
+    require_load: Boolean(reuseSession && worker.transport === "acp"),
     agent_version: version,
     started_at: new Date().toISOString(),
     pid: null,
@@ -354,6 +382,10 @@ async function dispatch(name, args) {
       return ok({
         platform: process.platform,
         agent_bin: agentBin(),
+        agy_bin: existsSync(agyBin()) ? agyBin() : null,
+        default_backend: defaultBackend(),
+        default_cursor_model: defaultCursorModel(),
+        cursor_transport: cursorTransport(),
         home: homeDir(),
         allowed_roots: allowedRoots(),
         root_delimiter: process.platform === "win32" ? ";" : ":",
@@ -378,6 +410,7 @@ async function dispatch(name, args) {
           mode: args.mode,
           worktree: args.worktree,
           worktreeName: args.worktree_name,
+          backend: args.backend,
         })
       );
     case "followup_cursor": {
@@ -389,25 +422,32 @@ async function dispatch(name, args) {
       let taskName = args.task_name;
       let mode = args.mode;
       let sessionCanary = null;
+      let backend = args.backend;
+      let model = args.model;
       if (args.run_id) {
         const prev = refreshRun(args.run_id).meta;
         workspace = workspace || prev.workspace;
         sessionId = sessionId || prev.session_id;
         taskName = taskName || prev.task_name;
         mode = mode || prev.mode;
+        model = model || prev.model;
         sessionCanary = prev.canary || null;
+        backend = backend || prev.backend;
       }
-      if (!sessionId) throw new Error("没有可用的 session_id");
+      if (!sessionId && resolveWorker(backend).backend !== "agy") {
+        throw new Error("没有可用的 session_id");
+      }
       return ok(
         await enqueueSession(sessionId, () =>
           launchRun({
             prompt: args.prompt,
             workspace,
-            model: args.model,
+            model,
             sessionId,
             taskName,
             mode,
             sessionCanary,
+            backend,
           })
         )
       );

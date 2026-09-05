@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import {
   BRIDGE_DIR,
   agentBin,
+  agyBin,
   commanderLockPath,
   defaultRootList,
   projectCodexDir,
@@ -40,11 +41,15 @@ enabled = true
 
 [mcp_servers.cursor_worker.env]
 AGENT_BIN = ${tomlQuote(agentBin())}
+AGY_BIN = ${tomlQuote(agyBin())}
 CURSOR_WORKER_HOME = ${tomlQuote(workerHome)}
 CURSOR_WORKER_ROOTS = ${tomlQuote(roots.join(rootDelimiter()))}
 CURSOR_WORKER_MAX_RUNNING = "4"
 CURSOR_WORKER_WAIT_MAX = "300"
 CURSOR_WORKER_REQUIRE_SESSION = "1"
+CURSOR_WORKER_DEFAULT_BACKEND = "cursor"
+CURSOR_WORKER_DEFAULT_MODEL = "cursor-grok-4.6-xhigh-fast"
+CURSOR_WORKER_CURSOR_TRANSPORT = "acp"
 
 [features]
 hooks = true

@@ -112,7 +112,7 @@ Codex 只在**信任的项目**里加载项目级 `.codex/`。MCP 出现的前�
 
 1. 需要时先 `cursor_bridge_health`。
 2. 把用户目标拆成互不依赖的子任务；每个 `prompt` 自包含：目标、文件范围、验收标准、禁止事项。
-3. **并行**：每个子任务一次 `spawn_cursor`，不同 `task_name`，`workspace` 为绝对路径且落在 `CURSOR_WORKER_ROOTS` 内。同仓库并行优先 `worktree: true`，否则必须划开文件。不要因为已有 run 在跑就串行。
+3. **并行**：每个子任务一次 `spawn_cursor`，不同 `task_name`，`workspace` 为绝对路径且落在 `CURSOR_WORKER_ROOTS` 内。默认 Cursor 工人走 ACP，模型为 `cursor-grok-4.6-xhigh-fast`。`backend=agy` 是 Antigravity 的 `-p` 降级，不要当一等续跑后端。同仓库并行优先 `worktree: true`，否则必须划开文件。不要因为已有 run 在跑就串行。
 4. `spawn_cursor` 立刻返回。同时在跑的工人有上限（默认 4）。短任务 `wait_cursor`；长任务把 `max_seconds` 加大（默认上限 300，须小于 MCP `tool_timeout_sec`）。下一轮用户发言时，hook 会注入已完成工人摘要；Codex 仍不会在后台自己醒来。
 5. `completed` 后你验收：`git diff`、跑测试。不要只信 `summary`。
 6. 同一工人补刀：`followup_cursor`。无 session 的任务会被拒绝开工，以免无法续跑。

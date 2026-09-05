@@ -4,8 +4,14 @@ import path from "node:path";
 import {
   BRIDGE_DIR,
   commanderLockPath,
+  cursorTransport,
+  DEFAULT_CURSOR_MODEL,
+  defaultBackend,
+  defaultCursorModel,
+  resolveCursorModel,
   homeDir,
   isPathInsideRoot,
+  normalizeBackend,
   projectCodexDir,
   rootDelimiter,
   splitRootList,
@@ -66,5 +72,13 @@ assert(
   existsSync(path.join(BRIDGE_DIR, ".agents", "skills", "cursor-worker", "SKILL.md")),
   "project skill lives in .agents/skills"
 );
+assert(normalizeBackend("agy") === "agy", "backend agy");
+assert(normalizeBackend("ANTIGRAVITY") === "agy", "backend antigravity");
+assert(defaultBackend() === "cursor" || defaultBackend() === "agy", "default backend");
+assert(["acp", "print"].includes(cursorTransport()), "cursor transport");
+assert(DEFAULT_CURSOR_MODEL === "cursor-grok-4.6-xhigh-fast", "default grok slug");
+assert(defaultCursorModel() === "cursor-grok-4.6-xhigh-fast", "default cursor model");
+assert(resolveCursorModel("") === "cursor-grok-4.6-xhigh-fast", "empty model falls back");
+assert(resolveCursorModel("composer-2.5-fast") === "composer-2.5-fast", "explicit model wins");
 
 console.log("path tests ok");

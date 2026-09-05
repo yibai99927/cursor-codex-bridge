@@ -111,8 +111,8 @@ function discoverAgentBin() {
           join(home, ".local", "bin", "cursor-agent.exe"),
         ]
       : [
-          join(home, ".local", "bin", "agent"),
           join(home, ".local", "bin", "cursor-agent"),
+          join(home, ".local", "bin", "agent"),
         ];
   for (const file of candidates) {
     if (looksLikeBinary(file)) return file;
@@ -120,13 +120,13 @@ function discoverAgentBin() {
   if (process.platform === "win32") {
     return (
       firstWhereHit("cursor-agent.exe") ||
-      firstWhereHit("agent.exe") ||
       firstWhereHit("cursor-agent") ||
+      firstWhereHit("agent.exe") ||
       firstWhereHit("agent") ||
       candidates[0]
     );
   }
-  return firstWhichHit("agent") || firstWhichHit("cursor-agent") || candidates[0];
+  return firstWhichHit("cursor-agent") || firstWhichHit("agent") || candidates[0];
 }
 
 let cachedAgentBin;
@@ -141,8 +141,8 @@ export function agentNeedsShell(bin = agentBin()) {
   return process.platform === "win32" && /\.(cmd|bat)$/i.test(bin);
 }
 
-export function agentEnv() {
-  const dir = dirname(agentBin());
+export function agentEnv(bin = agentBin()) {
+  const dir = dirname(bin);
   return {
     ...process.env,
     PATH: `${dir}${delimiter}${process.env.PATH || ""}`,
@@ -157,6 +157,82 @@ export function execAgent(args, extra = {}) {
     shell: agentNeedsShell(),
     ...extra,
   });
+}
+
+function discoverAgyBin() {
+  const home = homedir();
+  const localAppData =
+    process.env.LOCALAPPDATA || join(home, "AppData", "Local");
+  const candidates =
+    process.platform === "win32"
+      ? [
+          join(localAppData, "agy", "bin", "agy.exe"),
+          join(localAppData, "agy", "agy.exe"),
+          join(home, ".local", "bin", "agy.exe"),
+        ]
+      : [join(home, ".local", "bin", "agy")];
+  for (const file of candidates) {
+    if (looksLikeBinary(file)) return file;
+  }
+  if (process.platform === "win32") {
+    return firstWhereHit("agy.exe") || firstWhereHit("agy") || candidates[0];
+  }
+  return firstWhichHit("agy") || candidates[0];
+}
+
+let cachedAgyBin;
+
+export function agyBin() {
+  if (process.env.AGY_BIN || process.env.ANTIGRAVITY_BIN) {
+    return process.env.AGY_BIN || process.env.ANTIGRAVITY_BIN;
+  }
+  if (!cachedAgyBin) cachedAgyBin = discoverAgyBin();
+  return cachedAgyBin;
+}
+
+export function normalizeBackend(value) {
+  const raw = String(value || "").toLowerCase();
+  if (raw === "agy" || raw === "antigravity") return "agy";
+  return "cursor";
+}
+
+export function defaultBackend() {
+  return normalizeBackend(process.env.CURSOR_WORKER_DEFAULT_BACKEND || "cursor");
+}
+
+export function cursorTransport() {
+  const raw = (process.env.CURSOR_WORKER_CURSOR_TRANSPORT || "acp").toLowerCase();
+  return raw === "print" || raw === "p" || raw === "-p" ? "print" : "acp";
+}
+
+export const DEFAULT_CURSOR_MODEL = "cursor-grok-4.6-xhigh-fast";
+
+export function defaultCursorModel() {
+  const raw = (process.env.CURSOR_WORKER_DEFAULT_MODEL || "").trim();
+  return raw || DEFAULT_CURSOR_MODEL;
+}
+
+export function resolveCursorModel(model) {
+  const raw = typeof model === "string" ? model.trim() : "";
+  return raw || defaultCursorModel();
+}
+
+export function resolveWorker(backend) {
+  const kind = normalizeBackend(backend || defaultBackend());
+  if (kind === "agy") {
+    const bin = agyBin();
+    if (!bin || !existsSync(bin)) {
+      throw new Error(
+        "找不到 agy CLI。agy 目前是 -p 降级后端，装好 Antigravity CLI 后设 AGY_BIN。"
+      );
+    }
+    return { backend: "agy", transport: "print", bin };
+  }
+  const bin = agentBin();
+  if (!bin || !existsSync(bin)) {
+    throw new Error(`找不到 Cursor CLI: ${bin || "(空)"}`);
+  }
+  return { backend: "cursor", transport: cursorTransport(), bin };
 }
 
 export function allowedRoots() {
@@ -357,6 +433,7 @@ export function isBridgePid(pid, kind) {
   return (
     lower.includes("cursor-agent") ||
     lower.includes("cursor\\agent") ||
+    lower.includes("agy") ||
     /(^|[\\/ ])agent(\.exe)?(\s|$)/.test(lower) ||
     lower.includes("agent.exe")
   );
@@ -462,6 +539,22 @@ export function summarizeEvents(events) {
 
   for (const event of events) {
     if (event.session_id) sessionId = event.session_id;
+    if (event.type === "acp" && event.update) {
+      const update = event.update;
+      const kind = update.sessionUpdate;
+      const text =
+        typeof update.content === "string"
+          ? update.content
+          : update.content?.text || "";
+      if (kind === "agent_thought_chunk" && text) lastThinking = text;
+      if (kind === "agent_message_chunk" && text) lastAssistant += text;
+      if (kind === "tool_call" || kind === "tool_call_update") {
+        const name = update.title || update.kind || "tool";
+        const path = update.locations?.[0]?.path || update.path || "";
+        tools.push(path ? `${name} ${path}` : String(name));
+        if (path && /write|edit|apply|delete/i.test(name)) edited.push(path);
+      }
+    }
     if (event.type === "thinking" && event.subtype === "delta" && event.text) {
       lastThinking = event.text;
     }
@@ -580,11 +673,14 @@ export function publicRun(meta) {
   return {
     run_id: meta.run_id,
     task_name: meta.task_name ?? null,
+    backend: meta.backend ?? "cursor",
+    transport: meta.transport ?? null,
     session_id: meta.session_id,
     status: meta.status,
     workspace: meta.workspace,
     prompt: meta.prompt,
     mode: meta.mode ?? null,
+    model: meta.model ?? null,
     started_at: meta.started_at,
     ended_at: meta.ended_at ?? null,
     duration_ms: meta.duration_ms ?? null,

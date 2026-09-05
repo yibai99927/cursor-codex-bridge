@@ -18,7 +18,7 @@ description: 把编码实现外包给 Cursor CLI。Codex 只做规划与验收�
 
 1. 需要时先 `cursor_bridge_health`。
 2. 把用户目标拆成可并行的独立任务；每个任务的 `prompt` 必须自包含：目标、文件范围、验收标准、禁止事项。
-3. **一次发出多个** `spawn_cursor`（`workspace` 用要改的业务仓库绝对路径，不必是本桥仓库）。立刻拿到各 `run_id` / `session_id`。
+3. **一次发出多个** `spawn_cursor`（`workspace` 用要改的业务仓库绝对路径，不必是本桥仓库）。默认 `backend=cursor`，走 ACP，模型为 `cursor-grok-4.6-xhigh-fast`。只要便宜的 Gemini 额度、且本机有 Antigravity CLI，才设 `backend=agy`（`-p` 降级，续跑不可靠）。Cursor 的 `session_id` 可能在开工后几秒才写入，用 `get_cursor_status` 看。
 4. 短任务：`wait_cursor`。长任务：`get_cursor_status` 轮询，或 `wait_cursor` 多次（单次上限见 `CURSOR_WORKER_WAIT_MAX`，默认 300 秒）。
 5. 全部 `completed` 后你做验收：看 diff、跑测试、对照验收标准。
 6. 不合格则对**对应那条** `followup_cursor`；新开一条线则再 `spawn_cursor`。

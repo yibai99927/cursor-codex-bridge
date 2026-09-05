@@ -127,7 +127,7 @@ try {
     `spawned ${b.task_name}=${b.run_id} ${b.status} ${b.session_id}\n`
   );
 
-  if (a.session_id === b.session_id) {
+  if (a.session_id && b.session_id && a.session_id === b.session_id) {
     failures.push("两个并行 spawn 不应共享 session_id");
   }
   if (!["running", "starting", "completed"].includes(a.status)) {

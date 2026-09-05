@@ -10,12 +10,16 @@ tool_timeout_sec = 360
 enabled = true
 
 [mcp_servers.cursor_worker.env]
-AGENT_BIN = "/ABS/PATH/TO/agent"
+AGENT_BIN = "/ABS/PATH/TO/cursor-agent"
+AGY_BIN = "/ABS/PATH/TO/agy"
 CURSOR_WORKER_HOME = "/ABS/PATH/TO/cursor-codex-bridge/.codex/cursor-worker"
 CURSOR_WORKER_ROOTS = "/ABS/PATH/TO/your/dev:/ABS/PATH/TO/your/Documents"
 CURSOR_WORKER_MAX_RUNNING = "4"
 CURSOR_WORKER_WAIT_MAX = "300"
 CURSOR_WORKER_REQUIRE_SESSION = "1"
+CURSOR_WORKER_DEFAULT_BACKEND = "cursor"
+CURSOR_WORKER_DEFAULT_MODEL = "cursor-grok-4.6-xhigh-fast"
+CURSOR_WORKER_CURSOR_TRANSPORT = "acp"
 
 [features]
 hooks = true
